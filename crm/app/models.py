@@ -142,3 +142,56 @@ def update_crm_person_id(lead_id, crm_person_id):
     conn.commit()
     cur.close()
     conn.close()
+
+def search_leads(phone=None, email=None, name=None):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    query = """
+    SELECT *
+    FROM leads
+    WHERE
+        (%s IS NULL OR phone_number ILIKE %s)
+    AND (%s IS NULL OR email ILIKE %s)
+    AND (%s IS NULL OR first_name ILIKE %s OR last_name ILIKE %s)
+    ORDER BY created_at DESC
+    LIMIT 50
+    """
+
+    cur.execute(
+        query,
+        (
+            phone, f"%{phone}%" if phone else None,
+            email, f"%{email}%" if email else None,
+            name, f"%{name}%", f"%{name}%"
+        )
+    )
+
+    cols = [desc[0] for desc in cur.description]
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return [dict(zip(cols, row)) for row in rows]
+
+
+def get_lead_by_id(lead_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT * FROM leads WHERE id = %s",
+        (lead_id,)
+    )
+
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    cols = [desc[0] for desc in cur.description]
+    lead = dict(zip(cols, row))
+
+    cur.close()
+    conn.close()
+    return lead
