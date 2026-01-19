@@ -90,39 +90,45 @@ def get_unsynced_leads():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    cur.execute(
-        """
+    cur.execute("""
         SELECT
             id,
             first_name,
             last_name,
             phone_number,
             email,
-            city
+            city,
+
+            -- CRM
+            crm_person_id,
+
+            -- Custom fields
+            contacted,
+            vehicle_type,
+            budget,
+            employment_position,
+            employment_status
+
         FROM leads
         WHERE crm_synced = FALSE
-        """
-    )
+    """)
 
     rows = cur.fetchall()
+    columns = [desc[0] for desc in cur.description]
+
     cur.close()
     conn.close()
 
-    keys = [
-        "id",
-        "first_name",
-        "last_name",
-        "phone_number",
-        "email",
-        "city",
-    ]
+    return [dict(zip(columns, row)) for row in rows]
 
-    return [dict(zip(keys, row)) for row in rows]
 
 
 # -------------------------------------------------
 # Mark lead as CRM-synced (ATOMIC)
 # -------------------------------------------------
+# app/models.py
+from app.db import get_db_connection
+
 def update_crm_person_id(lead_id, crm_person_id):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -136,12 +142,14 @@ def update_crm_person_id(lead_id, crm_person_id):
             updated_at = now()
         WHERE id = %s
         """,
-        (crm_person_id, lead_id)
+        (crm_person_id, lead_id),
     )
 
     conn.commit()
     cur.close()
     conn.close()
+
+
 
 def search_leads(phone=None, email=None, name=None):
     conn = get_db_connection()
