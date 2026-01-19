@@ -1,7 +1,8 @@
 import os
 import requests
+from typing import Optional
 
-TWENTY_API_URL = os.getenv("TWENTY_API_URL")
+TWENTY_API_URL = os.getenv("TWENTY_API_URL")  # http://localhost:3000/graphql
 TWENTY_API_TOKEN = os.getenv("TWENTY_API_TOKEN")
 
 if not TWENTY_API_URL or not TWENTY_API_TOKEN:
@@ -13,43 +14,8 @@ HEADERS = {
 }
 
 # -------------------------------------------------
-# FIND PERSON BY EMAIL
+# GraphQL executor
 # -------------------------------------------------
-FIND_PERSON_BY_EMAIL = """
-query FindPersonByEmail($email: String!) {
-  people(
-    filter: {
-      emails: { primaryEmail: { eq: $email } }
-    }
-  ) {
-    edges {
-      node {
-        id
-      }
-    }
-  }
-}
-"""
-
-# -------------------------------------------------
-# FIND PERSON BY PHONE
-# -------------------------------------------------
-FIND_PERSON_BY_PHONE = """
-query FindPersonByPhone($phone: String!) {
-  people(
-    filter: {
-      phones: { primaryPhoneNumber: { eq: $phone } }
-    }
-  ) {
-    edges {
-      node {
-        id
-      }
-    }
-  }
-}
-"""
-
 def _execute_graphql(query: str, variables: dict):
     r = requests.post(
         TWENTY_API_URL,
@@ -57,58 +23,55 @@ def _execute_graphql(query: str, variables: dict):
         json={"query": query, "variables": variables},
         timeout=10,
     )
-
     r.raise_for_status()
     payload = r.json()
 
     if "errors" in payload:
-        raise Exception(f"Twenty GraphQL error: {payload['errors']}")
+        raise Exception(payload["errors"])
 
     return payload["data"]
 
+# -------------------------------------------------
+# Find person
+# -------------------------------------------------
+FIND_PERSON_BY_EMAIL = """
+query ($email: String!) {
+  people(filter: { emails: { primaryEmail: { eq: $email } } }) {
+    edges { node { id } }
+  }
+}
+"""
 
-def find_person_in_crm(email: str | None, phone: str | None) -> str | None:
-    """
-    Lookup order:
-    1. Email
-    2. Phone
-    """
+FIND_PERSON_BY_PHONE = """
+query ($phone: String!) {
+  people(filter: { phones: { primaryPhoneNumber: { eq: $phone } } }) {
+    edges { node { id } }
+  }
+}
+"""
 
-    # 1️⃣ Try email first
+def find_person_in_crm(email: Optional[str], phone: Optional[str]) -> Optional[str]:
     if email:
-        data = _execute_graphql(
-            FIND_PERSON_BY_EMAIL,
-            {"email": email}
-        )
-
+        data = _execute_graphql(FIND_PERSON_BY_EMAIL, {"email": email})
         edges = data["people"]["edges"]
         if edges:
             return edges[0]["node"]["id"]
 
-    # 2️⃣ Try phone
     if phone:
         phone_10 = phone[-10:]
-
-        data = _execute_graphql(
-            FIND_PERSON_BY_PHONE,
-            {"phone": phone_10}
-        )
-
+        data = _execute_graphql(FIND_PERSON_BY_PHONE, {"phone": phone_10})
         edges = data["people"]["edges"]
         if edges:
             return edges[0]["node"]["id"]
 
     return None
 
-
 # -------------------------------------------------
-# CREATE PERSON
+# Create person (SAFE fields only)
 # -------------------------------------------------
 CREATE_PERSON_MUTATION = """
-mutation CreatePerson($data: PersonCreateInput!) {
-  createPerson(data: $data) {
-    id
-  }
+mutation ($data: PersonCreateInput!) {
+  createPerson(data: $data) { id }
 }
 """
 
@@ -123,6 +86,7 @@ def create_person_in_crm(lead: dict) -> str:
             "primaryPhoneCountryCode": "IN",
             "primaryPhoneCallingCode": "+91",
         },
+        "city": lead.get("city"),
     }
 
     if lead.get("email"):
@@ -130,29 +94,20 @@ def create_person_in_crm(lead: dict) -> str:
             "primaryEmail": lead["email"]
         }
 
-    if lead.get("city"):
-        data["city"] = lead["city"]
+    try:
+        response = _execute_graphql(
+            CREATE_PERSON_MUTATION,
+            {"data": data}
+        )
+        return response["createPerson"]["id"]
 
-    payload = {
-        "query": CREATE_PERSON_MUTATION,
-        "variables": {"data": data},
-    }
-
-    r = requests.post(
-        TWENTY_API_URL,
-        headers=HEADERS,
-        json=payload,
-        timeout=10,
-    )
-
-    r.raise_for_status()
-    response = r.json()
-
-    if "errors" in response:
-        raise Exception(f"CreatePerson failed: {response['errors']}")
-
-    person = response.get("data", {}).get("createPerson")
-    if not person:
-        raise Exception(f"Unexpected CRM response: {response}")
-
-    return person["id"]
+    except Exception as e:
+        # Handle duplicate race safely
+        crm_id = find_person_in_crm(
+            lead.get("email"),
+            lead.get("phone_number")
+        )
+        if crm_id:
+            return crm_id
+        raise
+      
