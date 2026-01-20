@@ -33,6 +33,7 @@ def find_existing_lead(phone: str, email: str | None):
 # -------------------------------------------------
 # Create new lead
 # -------------------------------------------------
+# app/models.py
 def create_lead(data):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -40,38 +41,43 @@ def create_lead(data):
     cur.execute(
         """
         INSERT INTO leads (
+            lead_id,
             first_name,
             last_name,
-            phone,
+            full_name,
             email,
-            city,
-            country,
+            phone,
             employment_status,
             job_title,
             monthly_salary_min,
-            crm_synced
+            monthly_salary_max,
+            crm_synced,
+            task_created
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, false, false)
         RETURNING id
         """,
         (
+            data.lead_id,                 # 🔴 THIS WAS MISSING BEFORE
             data.first_name,
             data.last_name,
-            data.phone,
+            data.full_name,
             data.email,
-            data.city,
-            data.country,
+            data.phone,
             data.employment_status,
             data.job_title,
             data.monthly_salary_min,
-        )
+            data.monthly_salary_max,
+        ),
     )
 
-    lead_id = cur.fetchone()[0]
+    lead_db_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
-    return lead_id
+
+    return lead_db_id
+
 
 
 # -------------------------------------------------
@@ -178,3 +184,19 @@ def get_lead_by_id(lead_id):
     cur.close()
     conn.close()
     return lead
+
+def mark_lead_crm_synced(lead_id: int, crm_person_id: str):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE leads
+        SET crm_synced = true,
+            crm_person_id = %s
+        WHERE id = %s
+        """,
+        (crm_person_id, lead_id),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()

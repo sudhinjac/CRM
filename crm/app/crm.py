@@ -1,9 +1,8 @@
 # app/crm.py
-
 import os
 import requests
 import random
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 
 TWENTY_REST_URL = os.getenv("TWENTY_REST_URL", "http://localhost:3000/rest")
 TWENTY_API_TOKEN = os.getenv("TWENTY_API_TOKEN")
@@ -19,12 +18,13 @@ HEADERS = {
 # -------------------------------------------------
 # PEOPLE UPSERT
 # -------------------------------------------------
+
 def upsert_person_in_crm(lead: Dict[str, Any]) -> str:
     email = lead.get("email")
     if not email:
         raise ValueError("Email is required for CRM sync")
 
-    payload: Dict[str, Any] = {
+    payload = {
         "name": {
             "firstName": str(lead.get("first_name", "")).strip(),
             "lastName": str(lead.get("last_name", "")).strip(),
@@ -43,6 +43,7 @@ def upsert_person_in_crm(lead: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             pass
 
+    # 1️⃣ UPSERT
     r = requests.post(
         f"{TWENTY_REST_URL}/people?upsert=true",
         headers=HEADERS,
@@ -51,14 +52,27 @@ def upsert_person_in_crm(lead: Dict[str, Any]) -> str:
     )
 
     if not r.ok:
-        raise RuntimeError(f"CRM error {r.status_code}: {r.text}")
+        raise RuntimeError(f"CRM upsert failed: {r.text}")
 
-    data = r.json()
-    if isinstance(data, list) and data:
-        return data[0]["id"]
+    # 2️⃣ ALWAYS FETCH PERSON BY EMAIL (SOURCE OF TRUTH)
+    lookup = requests.get(
+        f"{TWENTY_REST_URL}/people",
+        headers=HEADERS,
+        params={
+            "filter[emails.primaryEmail]": email.lower()
+        },
+        timeout=10,
+    )
 
-    raise RuntimeError("Failed to resolve CRM person ID")
+    if not lookup.ok:
+        raise RuntimeError(f"CRM lookup failed: {lookup.text}")
 
+    people = lookup.json().get("data", {}).get("people", [])
+
+    if not people:
+        raise RuntimeError("CRM person not found after upsert")
+
+    return people[0]["id"]
 
 # -------------------------------------------------
 # WORKSPACE MEMBERS
@@ -75,7 +89,7 @@ def get_workspace_members() -> List[Dict[str, Any]]:
 
 
 # -------------------------------------------------
-# TASK LOAD BALANCING
+# TASK LOAD
 # -------------------------------------------------
 def get_open_task_count(member_id: str) -> int:
     r = requests.get(
@@ -87,62 +101,49 @@ def get_open_task_count(member_id: str) -> int:
         },
         timeout=10,
     )
-    if not r.ok:
-        return 0
     return r.json().get("totalCount", 0)
 
 
 def pick_member_with_lowest_load(members: List[Dict[str, Any]]) -> Dict[str, Any]:
     loads = [(m, get_open_task_count(m["id"])) for m in members]
-    min_load = min(count for _, count in loads)
-    candidates = [m for m, count in loads if count == min_load]
-    return random.choice(candidates)
+    min_load = min(c for _, c in loads)
+    return random.choice([m for m, c in loads if c == min_load])
 
 
 # -------------------------------------------------
-# FIND PEOPLE WITHOUT TODO TASKS
-# (TITLE-BASED — RELIABLE)
+# PEOPLE WITHOUT TODO TASKS
 # -------------------------------------------------
 def get_people_without_open_tasks() -> List[Dict[str, Any]]:
-    # Fetch all people
     r_people = requests.get(
         f"{TWENTY_REST_URL}/people",
         headers=HEADERS,
         timeout=10,
     )
-    if not r_people.ok:
-        raise RuntimeError(r_people.text)
-
     people = r_people.json()["data"]["people"]
 
-    # Fetch all open tasks once
     r_tasks = requests.get(
         f"{TWENTY_REST_URL}/tasks",
         headers=HEADERS,
         params={"filter[status]": "TODO"},
         timeout=10,
     )
-    if not r_tasks.ok:
-        raise RuntimeError(r_tasks.text)
-
     tasks = r_tasks.json()["data"]["tasks"]
-    task_titles = {t["title"] for t in tasks}
+    existing_titles = {t["title"] for t in tasks}
 
-    eligible: List[Dict[str, Any]] = []
-
+    eligible = []
     for p in people:
-        full_name = f"{p['name']['firstName']} {p['name']['lastName']}"
-        expected_title = f"📞 Sales Follow-up — {full_name}"
-
-        if expected_title not in task_titles:
+        name = f"{p['name']['firstName']} {p['name']['lastName']}"
+        title = f"📞 Sales Follow-up — {name}"
+        if title not in existing_titles:
             eligible.append(p)
 
     return eligible
 
 
 # -------------------------------------------------
-# CREATE TASK (LOUD & CLEAR)
+# CREATE TASK
 # -------------------------------------------------
+
 def create_task_for_person(person: Dict[str, Any], assignee_id: str) -> str:
     full_name = f"{person['name']['firstName']} {person['name']['lastName']}"
 
@@ -157,20 +158,14 @@ def create_task_for_person(person: Dict[str, Any], assignee_id: str) -> str:
 ### 👤 Customer
 **Name:** {full_name}  
 **Email:** {person['emails']['primaryEmail']}  
-**City:** {person.get('city', '')}
-
----
 
 ### 📌 ACTION ITEMS
-- 📞 Call the customer
+- 📞 Call customer
 - 💬 Understand requirements
 - 💰 Confirm budget
-- 📝 Update CRM after call
+- 📝 Update CRM
 
----
-
-### ⏱ PRIORITY
-🚨 **HIGH — DO TODAY**
+🚨 **PRIORITY: HIGH**
 """
         },
     }
@@ -185,4 +180,7 @@ def create_task_for_person(person: Dict[str, Any], assignee_id: str) -> str:
     if not r.ok:
         raise RuntimeError(f"Task creation failed: {r.text}")
 
-    return r.json()["data"]["task"]["id"]
+    data = r.json()
+
+    # ✅ THIS is the correct response shape
+    return data["data"]["task"]["id"]
