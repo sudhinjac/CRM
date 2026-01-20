@@ -2,11 +2,14 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
+
 class LeadCreate(BaseModel):
     first_name: str
     last_name: str
-    phone_number: str
+    phone: str
     email: Optional[EmailStr] = None
     city: Optional[str] = None
-    vehicle_type: Optional[str] = None
-    budget: Optional[float] = None
+    country: Optional[str] = None
+    employment_status: Optional[str] = None
+    job_title: Optional[str] = None
+    monthly_salary_min: Optional[float] = None

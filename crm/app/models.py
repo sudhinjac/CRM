@@ -1,23 +1,16 @@
 # app/models.py
 from app.db import get_db_connection
 
-
 # -------------------------------------------------
-# Find existing lead (SAFE + deterministic)
+# Find existing lead (email preferred, phone fallback)
 # -------------------------------------------------
 def find_existing_lead(phone: str, email: str | None):
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # 1️⃣ Prefer email match
     if email:
         cur.execute(
-            """
-            SELECT id
-            FROM leads
-            WHERE email = %s
-            LIMIT 1
-            """,
+            "SELECT id FROM leads WHERE email = %s LIMIT 1",
             (email,)
         )
         row = cur.fetchone()
@@ -26,14 +19,8 @@ def find_existing_lead(phone: str, email: str | None):
             conn.close()
             return row[0]
 
-    # 2️⃣ Fallback to phone match
     cur.execute(
-        """
-        SELECT id
-        FROM leads
-        WHERE phone_number = %s
-        LIMIT 1
-        """,
+        "SELECT id FROM leads WHERE phone = %s LIMIT 1",
         (phone,)
     )
 
@@ -55,24 +42,28 @@ def create_lead(data):
         INSERT INTO leads (
             first_name,
             last_name,
-            phone_number,
+            phone,
             email,
             city,
-            vehicle_type,
-            budget,
+            country,
+            employment_status,
+            job_title,
+            monthly_salary_min,
             crm_synced
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,FALSE)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
         RETURNING id
         """,
         (
             data.first_name,
             data.last_name,
-            data.phone_number,
+            data.phone,
             data.email,
             data.city,
-            data.vehicle_type,
-            data.budget,
+            data.country,
+            data.employment_status,
+            data.job_title,
+            data.monthly_salary_min,
         )
     )
 
@@ -87,48 +78,33 @@ def create_lead(data):
 # Get leads NOT synced to CRM
 # -------------------------------------------------
 def get_unsynced_leads():
-    conn = get_db_connection()
-    cur = conn.cursor()
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id,
+                    lead_id,
+                    first_name,
+                    last_name,
+                    email,
+                    phone,
+                    city,
+                    country,
+                    employment_status,
+                    job_title,
+                    monthly_salary_min
+                FROM leads
+                WHERE crm_synced = FALSE
+            """)
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
 
-    cur.execute("""
-        SELECT
-            id,
-            first_name,
-            last_name,
-            phone_number,
-            email,
-            city,
-
-            -- CRM
-            crm_person_id,
-
-            -- Custom fields
-            contacted,
-            vehicle_type,
-            budget,
-            employment_position,
-            employment_status
-
-        FROM leads
-        WHERE crm_synced = FALSE
-    """)
-
-    rows = cur.fetchall()
-    columns = [desc[0] for desc in cur.description]
-
-    cur.close()
-    conn.close()
-
-    return [dict(zip(columns, row)) for row in rows]
-
+    return [dict(zip(cols, row)) for row in rows]
 
 
 # -------------------------------------------------
-# Mark lead as CRM-synced (ATOMIC)
+# Mark lead as CRM-synced
 # -------------------------------------------------
-# app/models.py
-from app.db import get_db_connection
-
 def update_crm_person_id(lead_id, crm_person_id):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -142,7 +118,7 @@ def update_crm_person_id(lead_id, crm_person_id):
             updated_at = now()
         WHERE id = %s
         """,
-        (crm_person_id, lead_id),
+        (crm_person_id, lead_id)
     )
 
     conn.commit()
@@ -150,24 +126,24 @@ def update_crm_person_id(lead_id, crm_person_id):
     conn.close()
 
 
-
+# -------------------------------------------------
+# Search leads
+# -------------------------------------------------
 def search_leads(phone=None, email=None, name=None):
     conn = get_db_connection()
     cur = conn.cursor()
 
-    query = """
-    SELECT *
-    FROM leads
-    WHERE
-        (%s IS NULL OR phone_number ILIKE %s)
-    AND (%s IS NULL OR email ILIKE %s)
-    AND (%s IS NULL OR first_name ILIKE %s OR last_name ILIKE %s)
-    ORDER BY created_at DESC
-    LIMIT 50
-    """
-
     cur.execute(
-        query,
+        """
+        SELECT *
+        FROM leads
+        WHERE
+            (%s IS NULL OR phone ILIKE %s)
+        AND (%s IS NULL OR email ILIKE %s)
+        AND (%s IS NULL OR first_name ILIKE %s OR last_name ILIKE %s)
+        ORDER BY created_at DESC
+        LIMIT 50
+        """,
         (
             phone, f"%{phone}%" if phone else None,
             email, f"%{email}%" if email else None,
@@ -175,29 +151,28 @@ def search_leads(phone=None, email=None, name=None):
         )
     )
 
-    cols = [desc[0] for desc in cur.description]
+    cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
 
     cur.close()
     conn.close()
-
     return [dict(zip(cols, row)) for row in rows]
 
 
+# -------------------------------------------------
+# Get lead by ID
+# -------------------------------------------------
 def get_lead_by_id(lead_id):
     conn = get_db_connection()
     cur = conn.cursor()
 
-    cur.execute(
-        "SELECT * FROM leads WHERE id = %s",
-        (lead_id,)
-    )
-
+    cur.execute("SELECT * FROM leads WHERE id = %s", (lead_id,))
     row = cur.fetchone()
+
     if not row:
         return None
 
-    cols = [desc[0] for desc in cur.description]
+    cols = [d[0] for d in cur.description]
     lead = dict(zip(cols, row))
 
     cur.close()
