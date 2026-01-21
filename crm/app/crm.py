@@ -1,9 +1,9 @@
-# app/crm.py
-import os
 import requests
 import random
 from typing import Dict, Any, List
+
 from app.config import TWENTY_REST_URL, TWENTY_REST_TOKEN
+from app.llm import generate_sales_followup_markdown
 
 # No os.getenv here. Config already validated.
 HEADERS = {
@@ -20,10 +20,10 @@ if not TWENTY_REST_TOKEN:
  #   "Content-Type": "application/json",
 #}
 
+#
 # -------------------------------------------------
 # PEOPLE UPSERT
 # -------------------------------------------------
-
 def upsert_person_in_crm(lead: Dict[str, Any]) -> str:
     email = lead.get("email")
     if not email:
@@ -150,22 +150,13 @@ def get_people_without_open_tasks() -> List[Dict[str, Any]]:
 # -------------------------------------------------
 def create_task_for_person(person: Dict[str, Any], assignee_id: str) -> str:
     full_name = f"{person['name']['firstName']} {person['name']['lastName']}"
-
+    markdown_body = generate_sales_followup_markdown(person)
     payload = {
         "title": f"📞 Sales Follow-up — {full_name}",
         "status": "TODO",
         "assigneeId": assignee_id,
         "bodyV2": {
-            "markdown": f"""
-## 🔥 CUSTOMER FOLLOW-UP REQUIRED
-
-**Name:** {full_name}  
-**Email:** {person['emails']['primaryEmail']}
-
-- Call customer
-- Understand requirements
-- Update CRM
-"""
+            "markdown": markdown_body,
         },
     }
 

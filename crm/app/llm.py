@@ -18,7 +18,8 @@ def generate_sales_followup_markdown(person: Dict[str, Any]) -> str:
         return _fallback_template(full_name, email)
 
     prompt = f"""
-You are a senior sales copywriter. Create a short, high-conversion follow-up note
+You are a senior car sales representative, you are the best sales guy in the world. 
+Create a short, high-conversion follow-up note
 for a sales rep in markdown format (no code fences).
 
 Customer details:
