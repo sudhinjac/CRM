@@ -3,17 +3,22 @@ import os
 import requests
 import random
 from typing import Dict, Any, List
+from app.config import TWENTY_REST_URL, TWENTY_REST_TOKEN
 
-TWENTY_REST_URL = os.getenv("TWENTY_REST_URL", "http://localhost:3000/rest")
-TWENTY_API_TOKEN = os.getenv("TWENTY_API_TOKEN")
-
-if not TWENTY_API_TOKEN:
-    raise RuntimeError("TWENTY_API_TOKEN not set")
-
+# No os.getenv here. Config already validated.
 HEADERS = {
-    "Authorization": f"Bearer {TWENTY_API_TOKEN}",
+    "Authorization": f"Bearer {TWENTY_REST_TOKEN}",
     "Content-Type": "application/json",
+    "Prefer": "resolution=merge-duplicates,return=representation",
 }
+
+if not TWENTY_REST_TOKEN:
+    raise RuntimeError("TWENTY_REST_TOKEN not set")
+
+#HEADERS = {
+ #   "Authorization": f"Bearer {TWENTY_REST_TOKEN}",
+ #   "Content-Type": "application/json",
+#}
 
 # -------------------------------------------------
 # PEOPLE UPSERT
@@ -143,7 +148,6 @@ def get_people_without_open_tasks() -> List[Dict[str, Any]]:
 # -------------------------------------------------
 # CREATE TASK
 # -------------------------------------------------
-
 def create_task_for_person(person: Dict[str, Any], assignee_id: str) -> str:
     full_name = f"{person['name']['firstName']} {person['name']['lastName']}"
 
@@ -155,17 +159,12 @@ def create_task_for_person(person: Dict[str, Any], assignee_id: str) -> str:
             "markdown": f"""
 ## 🔥 CUSTOMER FOLLOW-UP REQUIRED
 
-### 👤 Customer
 **Name:** {full_name}  
-**Email:** {person['emails']['primaryEmail']}  
+**Email:** {person['emails']['primaryEmail']}
 
-### 📌 ACTION ITEMS
-- 📞 Call customer
-- 💬 Understand requirements
-- 💰 Confirm budget
-- 📝 Update CRM
-
-🚨 **PRIORITY: HIGH**
+- Call customer
+- Understand requirements
+- Update CRM
 """
         },
     }
@@ -180,7 +179,10 @@ def create_task_for_person(person: Dict[str, Any], assignee_id: str) -> str:
     if not r.ok:
         raise RuntimeError(f"Task creation failed: {r.text}")
 
-    data = r.json()
+    task = r.json()
 
-    # ✅ THIS is the correct response shape
-    return data["data"]["task"]["id"]
+    # ✅ REST response → task is top-level
+    if "id" not in task:
+        raise RuntimeError(f"Unexpected task response: {task}")
+
+    return task["id"]
